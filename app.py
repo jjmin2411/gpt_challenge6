@@ -39,6 +39,12 @@ questions_prompt = ChatPromptTemplate.from_messages(
     Based ONLY on the following context make 10 questions to test the user's knowledge about the text.
     
     Each question should have 4 answers, three of them must be incorrect and one should be correct.
+
+    Difficulty: {difficulty}
+
+    - Easy: Make simple and direct questions.
+    - Medium: Make questions that require understanding.
+    - Hard: Make difficult questions that require careful reading and inference.
     
     Use (o) to signal the correct answer.
     
@@ -158,32 +164,41 @@ def split_file(file):
     return docs
 
 @st.cache_data(show_spinner="Making quiz...")
-def run_quiz_chain(_docs, topic, api_key):
-    llm = ChatOpenAI(
-        temperature=0.1,
-        model="gpt-3.5-turbo-1106",
-        streaming=True,
-        openai_api_key=api_key,
-    )
-
-    questions_chain = {"context": format_docs} | questions_prompt | llm
-    formatting_chain = formatting_prompt | llm
-
+def run_quiz_chain(_docs, topic, api_key,difficulty):
     chain = {"context": questions_chain} | formatting_chain | output_parser
-    return chain.invoke(_docs)
+    return chain.invoke({
+        "docs": _docs,
+        "difficulty": difficulty,
+    })
 
 @st.cache_data(show_spinner="Searching Wikipedia...")
 def wiki_search(term):
-    retriever = WikipediaRetriever(top_k_results=5)
-    docs = retriever.get_relevant_documents(term)
-    return docs
-
+    try:
+        retriever = WikipediaRetriever(
+            top_k_results=5,
+            lang="en",
+        )
+        docs = retriever.get_relevant_documents(term)
+        return docs
+    except Exception:
+        return None
+    
 with st.sidebar:
     st.link_button(
     "GitHub Repository",
     "https://github.com/jjmin2411/gpt_challenge6",
 )
     api_key = st.text_input("OpenAI API Key", type="password")
+
+    difficulty = st.selectbox(
+        "Choose quiz difficulty.",
+        (
+            "Easy",
+            "Medium",
+            "Hard",
+        ),
+        )
+
     docs = None
     choice = st.selectbox(
         "Choose what you want to use.",
@@ -216,7 +231,10 @@ llm = ChatOpenAI(
     openai_api_key = api_key,
 )
 
-questions_chain = {"context": format_docs} | questions_prompt | llm
+questions_chain = {
+    "context": lambda x: format_docs(x["docs"]),
+    "difficulty": lambda x: x["difficulty"],
+} | questions_prompt | llm
 formatting_chain = formatting_prompt | llm
 
 if not docs:
@@ -232,8 +250,12 @@ if not docs:
 else:
     with st.spinner("Generating quiz..."):
         st_callback = StreamlitCallbackHandler(st.container())
-        response = run_quiz_chain(docs, topic if topic else file.name, api_key)
-
+        response = run_quiz_chain(
+            docs,
+            topic if topic else file.name,
+            api_key,
+            difficulty,
+        )
     with st.form("questions_form"):
         user_answers = []
 
